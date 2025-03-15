@@ -261,7 +261,7 @@ fn send_http_response(stream: &mut TcpStream) {
     let content_length = payload.len();
     let content_type = "text/html";
     // Allow receiving from any client
-    let headers = format!("Content-Length: {content_length}\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: {content_type}");
+    let headers = format!("Content-Length: {content_length}\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: {content_type}\r\n");
 
     let http_response = format!("{respond_line}\r\n{headers}\r\n{payload}");
 
