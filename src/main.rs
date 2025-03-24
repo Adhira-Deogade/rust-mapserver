@@ -33,12 +33,47 @@ impl fmt::Display for Direction {
     }
 }
 
+impl Direction {
+    pub fn get_offset(&self) -> (i32, i32) {
+        match self {
+            Direction::N  => (0, -1),
+            Direction::NE => (1, -1),
+            Direction::E  => (1,  0),
+            Direction::SE => (1, 1),
+            Direction::S  => (0, 1),
+            Direction::SW => (-1, 1),
+            Direction::W  => (-1, 0),
+            Direction::NW => (-1, -1),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct Flight {
     id: String,
     x: i32,
     y: i32,
     direction: Direction,
+}
+
+impl Flight {
+    pub fn advance(&mut self) {
+        let (dx, dy) = self.direction.get_offset();
+        self.x += dx;
+        self.y += dy;
+
+        if (self.x < 0) {
+            self.x = MAP_WIDTH - 1;
+        } else if self.x >= MAP_WIDTH {
+            self.x = 0;
+        }
+
+        if (self.y < 0) {
+            self.y = MAP_HEIGHT - 1;
+        } else if self.y >= MAP_HEIGHT {
+            self.y = 0;
+        }
+    }
 }
 
 fn main() {
@@ -168,83 +203,7 @@ fn generate_map(data_set: &mut Vec<Flight>) {
 }
 
 fn move_aircrafts(data_set: &mut [Flight]) {
-
-    for i in 0..data_set.iter().count() {
-        match &data_set[i].direction {
-            Direction::N => {
-                data_set[i].y = data_set[i].y - 1;
-                if data_set[i].y < 0 {
-                    data_set[i].y = MAP_HEIGHT - 1;
-                }
-            }
-
-            Direction::NE => {
-                data_set[i].y = data_set[i].y - 1;
-                if data_set[i].y < 0 {
-                    data_set[i].y = MAP_HEIGHT - 1;
-                }
-                data_set[i].x = data_set[i].x + 1;
-                if data_set[i].x >= MAP_WIDTH {
-                    data_set[i].x = 0;
-                }
-            }
-
-            Direction::E => {
-                data_set[i].x = data_set[i].x + 1;
-                if data_set[i].x >= MAP_WIDTH {
-                    data_set[i].x = 0;
-                }
-            }
-
-            Direction::SE => {
-                data_set[i].x = data_set[i].x + 1;
-                if data_set[i].x >= MAP_WIDTH {
-                    data_set[i].x = 0;
-                }
-                data_set[i].y = data_set[i].y + 1;
-                if data_set[i].y >= MAP_HEIGHT {
-                    data_set[i].y = 0;
-                }
-            }
-
-            Direction::S => {
-                data_set[i].y = data_set[i].y + 1;
-                if data_set[i].y >= MAP_HEIGHT {
-                    data_set[i].y = 0;
-                }
-            }
-
-            Direction::SW => {
-                data_set[i].y = data_set[i].y + 1;
-                if data_set[i].y >= MAP_HEIGHT {
-                    data_set[i].y = 0;
-                }
-                data_set[i].x = data_set[i].x - 1;
-                if data_set[i].x < 0 {
-                    data_set[i].x = MAP_WIDTH - 1;
-                }
-            }
-
-            Direction::W => {
-                data_set[i].x = data_set[i].x - 1;
-                if data_set[i].x < 0 {
-                    data_set[i].x = MAP_WIDTH - 1;
-                }
-            }
-
-            Direction::NW => {
-                data_set[i].x = data_set[i].x - 1;
-                if data_set[i].x < 0 {
-                    data_set[i].x = MAP_WIDTH - 1;
-                }
-                data_set[i].y = data_set[i].y - 1;
-                if data_set[i].y < 0 {
-                    data_set[i].y = MAP_HEIGHT - 1;
-                }
-            }
-            
-        }
-    }
+    data_set.iter_mut().for_each(|f|f.advance())
 }
 
 fn process_stream(mut stream: TcpStream, data_requester: &Sender<()>, data_receiver: &Receiver<Vec<Flight>>) {
