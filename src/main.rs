@@ -3,15 +3,17 @@ use std::time::Duration;
 use std::io::{stdout, BufRead, BufReader, Write};
 use std::thread::sleep;
 use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc::{self, channel, Receiver, Sender};
 
 use rand::Rng;
+use serde::Serialize;
 
 const MAP_WIDTH: i32 = 20;
 const MAP_HEIGHT: i32 = 10;
 const MAX_NUM_AIRCRAFTS: i32 = 10;
 const MIN_NUM_AIRCRAFTS: i32 = 10;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 enum Direction {
     N, NE, E, SE, S, SW, W, NW
 }
@@ -31,7 +33,7 @@ impl fmt::Display for Direction {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 struct Flight {
     id: String,
     x: i32,
@@ -47,11 +49,23 @@ fn main() {
     dbg!(&traffic_data);
     draw_char_map(&traffic_data);
 
+    // Create 2 channels
+    // The reason why we need 2 channels is because each channel can send only 1 type of data in each channel in each direction
+    // The two different types are - request and data
+    // Data is of the type - Vector of Flight information
+    let (req_tx, req_rx) = mpsc::channel();
+    let (data_tx, data_rx) = mpsc::channel();
+
     // periodically move the aircrafts
     let handle = thread::spawn(move || {
 
         let mut skip_counter = 0;
         loop {
+
+            // Check to see if data has been requested
+            if let Ok(_) = req_rx.try_recv() {
+                data_tx.send(traffic_data.clone()).unwrap();
+            }
 
             if skip_counter == 3 {
               move_aircrafts(&mut traffic_data);
@@ -73,8 +87,11 @@ fn main() {
     // All the http requests are going to come in streams.
     // So we will listen to all the strems and process each of them.
     for stream_result in listener.incoming() {
+        println!("Getting stream result...");
         if let Ok(stream) =  stream_result {
-            process_stream(stream)
+            // Request data
+            // and Receive data
+            process_stream(stream, &req_tx, &data_rx);
         }
     }
     
@@ -230,10 +247,31 @@ fn move_aircrafts(data_set: &mut [Flight]) {
     }
 }
 
-fn process_stream(mut stream: TcpStream) {
+fn process_stream(mut stream: TcpStream, data_requester: &Sender<()>, data_receiver: &Receiver<Vec<Flight>>) {
     // println!("HTTP request received");
+    // Vector of Flights are all the flights in the data structure
     let http_request = read_http_request(&mut stream);
-    send_http_response(&mut stream);
+
+    // Adding error checks
+    if http_request.iter().count() <= 0 {
+        return;
+    }
+
+    if http_request[0].len() < 6 {
+        return;
+    }
+
+    let test = &http_request[0][..6];
+
+    if test != "GET / " {
+        println!("Request {} ignored:", http_request[0]);
+        return;
+    }
+
+    // We want to send data before we send any response
+    let latest_traffic_data = get_latest_traffic_data(data_requester, data_receiver);
+    dbg!(&latest_traffic_data);
+    send_http_response(&mut stream, &latest_traffic_data);
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Vec<String> {
@@ -250,16 +288,32 @@ fn read_http_request(stream: &mut TcpStream) -> Vec<String> {
 
 }
 
-fn send_http_response(stream: &mut TcpStream) {
+fn send_http_response(stream: &mut TcpStream, data: &Option<Vec<Flight>>) {
     // Respond line
     // Headers
     // Message body/ payload
     let respond_line = "HTTP/1.1 200 OK";
-    let payload = "<h1>Hello from the server!</h1>\r\n";
     // Carriage return and new line for differentiating between sections
+    // let payload = "<h1>Hello from the server!</h1>\r\n";
+
+    // We are sending the serialized json data now
+    let empty: Vec<Flight> = vec![];
+    let data_unwrapped: &Vec<Flight> = 
+        match data {
+            None => &empty,
+            Some(data) => &data
+        };
+    let serialization_result = serde_json::to_string(data_unwrapped);
+
+    let payload = match serialization_result {
+        Ok(str) => str,
+        _ => String::from("[]")
+    };
+    
 
     let content_length = payload.len();
-    let content_type = "text/html";
+    // let content_type = "text/html";
+    let content_type = "application/json";
     // Allow receiving from any client
     let headers = format!("Content-Length: {content_length}\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: {content_type}\r\n");
 
@@ -268,4 +322,14 @@ fn send_http_response(stream: &mut TcpStream) {
     stream.write_all(http_response.as_bytes()).unwrap();
     
 
+}
+
+// Retrieve latest traffic data
+fn get_latest_traffic_data(data_requester: &Sender<()>, data_receiver: &Receiver<Vec<Flight>>) -> Option<Vec<Flight>> {
+    data_requester.send(()).unwrap();
+
+    match data_receiver.recv_timeout(Duration::from_millis(5000)) {
+        Ok(data) => Some(data),
+        _ => None
+    }
 }
