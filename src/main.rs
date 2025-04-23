@@ -1,12 +1,15 @@
 use std::io::{stdout, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::{self, channel, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 use std::{fmt, thread};
 
+
 use rand::Rng;
 use serde::Serialize;
+use threadpool::ThreadPool;
 
 const MAP_WIDTH: i32 = 20;
 const MAP_HEIGHT: i32 = 10;
@@ -69,13 +72,13 @@ impl Flight {
         self.x += dx;
         self.y += dy;
 
-        if (self.x < 0) {
+        if self.x < 0 {
             self.x = MAP_WIDTH - 1;
         } else if self.x >= MAP_WIDTH {
             self.x = 0;
         }
 
-        if (self.y < 0) {
+        if self.y < 0 {
             self.y = MAP_HEIGHT - 1;
         } else if self.y >= MAP_HEIGHT {
             self.y = 0;
@@ -122,14 +125,24 @@ fn main() {
     // now run the REST API server
     let listener = TcpListener::bind("localhost:5000").expect("Unable to bind to port 5000");
     println!("Now listenning to port 5000");
+
+    let thread_pool = ThreadPool::new(5);
+    let data_mutex = Arc::new(Mutex::new(data_rx));
     // All the http requests are going to come in streams.
     // So we will listen to all the strems and process each of them.
     for stream_result in listener.incoming() {
         println!("Getting stream result...");
+
+        let req_tx_clone = req_tx.clone();
+        let data_mutex_clone = data_mutex.clone();
         if let Ok(stream) = stream_result {
             // Request data
             // and Receive data
-            process_stream(stream, &req_tx, &data_rx);
+            // This is gonna ask one of the threads to execute this code
+            // We are gonna pass clone, because each thread has to have a separate clone
+            thread_pool.execute(move || {
+                process_stream(stream, &req_tx_clone, &data_mutex_clone);
+            }); 
         }
     }
 
@@ -211,7 +224,8 @@ fn move_aircrafts(data_set: &mut [Flight]) {
 fn process_stream(
     mut stream: TcpStream,
     data_requester: &Sender<()>,
-    data_receiver: &Receiver<Vec<Flight>>,
+    data_receiver: &Arc<Mutex<Receiver<Vec<Flight>>>>,
+    // data_receiver: &Receiver<Vec<Flight>>,
 ) {
     // println!("HTTP request received");
     // Vector of Flights are all the flights in the data structure
@@ -287,11 +301,13 @@ fn send_http_response(stream: &mut TcpStream, data: &Option<Vec<Flight>>) {
 // Retrieve latest traffic data
 fn get_latest_traffic_data(
     data_requester: &Sender<()>,
-    data_receiver: &Receiver<Vec<Flight>>,
+    data_receiver: &Arc<Mutex<Receiver<Vec<Flight>>>>,
 ) -> Option<Vec<Flight>> {
+
+    // Function data starts from here..
     data_requester.send(()).unwrap();
 
-    match data_receiver.recv_timeout(Duration::from_millis(5000)) {
+    match data_receiver.lock().unwrap().recv_timeout(Duration::from_millis(5000)) {
         Ok(data) => Some(data),
         _ => None,
     }
